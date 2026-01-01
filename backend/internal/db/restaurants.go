@@ -2,8 +2,6 @@ package db
 
 import (
 	"time"
-
-	"github.com/jmoiron/sqlx"
 )
 
 // Restaurant represents a restaurant in the database
@@ -16,11 +14,11 @@ type Restaurant struct {
 
 // RestaurantRepository handles restaurant-related database queries
 type RestaurantRepository struct {
-	db *sqlx.DB
+	db *DBWrapper
 }
 
 // NewRestaurantRepository creates a new restaurant repository
-func NewRestaurantRepository(db *sqlx.DB) *RestaurantRepository {
+func NewRestaurantRepository(db *DBWrapper) *RestaurantRepository {
 	return &RestaurantRepository{db: db}
 }
 
@@ -75,30 +73,36 @@ type RestaurantWithDishCount struct {
 func (r *RestaurantRepository) FindTopByDishCount(limit int, dishCountThreshold int, minPrice, maxPrice float64, comparison string) ([]RestaurantWithDishCount, error) {
 	var restaurants []RestaurantWithDishCount
 
-	// Build comparison operator
-	var op string
+	// Use separate queries to avoid string concatenation of operators
+	// This eliminates any SQL injection risk from the comparison parameter
+	var query string
 	switch comparison {
-	case "more", "greater", "gt", ">":
-		op = ">"
 	case "less", "fewer", "lt", "<":
-		op = "<"
+		query = `
+			SELECT r.id, r.name, r.cash_balance, r.timezone, COUNT(mi.id) as dish_count
+			FROM restaurants r
+			INNER JOIN menu_items mi ON mi.restaurant_id = r.id
+			WHERE mi.is_active = TRUE
+			AND mi.price >= $1 AND mi.price <= $2
+			GROUP BY r.id, r.name, r.cash_balance, r.timezone
+			HAVING COUNT(mi.id) < $3
+			ORDER BY r.name
+			LIMIT $4
+		`
 	default:
-		op = ">" // default to "more"
+		// "more", "greater", "gt", ">", or any other value defaults to "more"
+		query = `
+			SELECT r.id, r.name, r.cash_balance, r.timezone, COUNT(mi.id) as dish_count
+			FROM restaurants r
+			INNER JOIN menu_items mi ON mi.restaurant_id = r.id
+			WHERE mi.is_active = TRUE
+			AND mi.price >= $1 AND mi.price <= $2
+			GROUP BY r.id, r.name, r.cash_balance, r.timezone
+			HAVING COUNT(mi.id) > $3
+			ORDER BY r.name
+			LIMIT $4
+		`
 	}
-
-	// Query: Count dishes within price range per restaurant,
-	// filter by dish count threshold, limit and order alphabetically
-	query := `
-		SELECT r.id, r.name, r.cash_balance, r.timezone, COUNT(mi.id) as dish_count
-		FROM restaurants r
-		INNER JOIN menu_items mi ON mi.restaurant_id = r.id
-		WHERE mi.is_active = TRUE
-		AND mi.price >= $1 AND mi.price <= $2
-		GROUP BY r.id, r.name, r.cash_balance, r.timezone
-		HAVING COUNT(mi.id) ` + op + ` $3
-		ORDER BY r.name
-		LIMIT $4
-	`
 
 	err := r.db.Select(&restaurants, query, minPrice, maxPrice, dishCountThreshold, limit)
 	if err != nil {
@@ -120,39 +124,65 @@ type SearchResult struct {
 }
 
 // Search searches for restaurants and dishes by name using full-text search
-// Returns results ranked by relevance
+// with prefix matching and trigram similarity for typo tolerance.
+// Returns results ranked by relevance.
 func (r *RestaurantRepository) Search(queryTerm string, limit int) ([]SearchResult, error) {
 	var results []SearchResult
 
-	// Full-text search query using PostgreSQL's ts_rank for relevance
-	// Searches both restaurants and menu_items
+	// Combined search using:
+	// 1. Full-text search with prefix matching (e.g., "piz" matches "pizza")
+	// 2. Word similarity for typo tolerance (e.g., "piza" matches "Pizza Margherita")
+	//    Uses word_similarity() which finds the best matching substring in the target,
+	//    so "piza" matches "Pepperoni Pizza Deluxe" by comparing against "Pizza".
+	// 3. ILIKE fallback for simple substring matching
+	//
+	// The query transforms input like "spicy chi" into "spicy:* & chi:*" for prefix matching.
+	// Results are ranked by the best score from either ts_rank or word similarity.
 	sqlQuery := `
+		WITH search_query AS (
+			SELECT
+				regexp_replace(trim($1), '\s+', ':* & ', 'g') || ':*' AS prefix_query,
+				$1 AS raw_query
+		)
 		(
-			SELECT 
+			SELECT
 				'restaurant' as type,
 				r.id,
 				r.name,
 				NULL::BIGINT as restaurant_id,
 				NULL::TEXT as restaurant_name,
 				NULL::NUMERIC as price,
-				ts_rank(r.name_search, plainto_tsquery('english', $1)) as relevance
-			FROM restaurants r
-			WHERE r.name_search @@ plainto_tsquery('english', $1)
+				GREATEST(
+					COALESCE(ts_rank(r.name_search, to_tsquery('english', sq.prefix_query)), 0),
+					word_similarity(sq.raw_query, r.name)
+				) as relevance
+			FROM restaurants r, search_query sq
+			WHERE r.name_search @@ to_tsquery('english', sq.prefix_query)
+			   OR word_similarity(sq.raw_query, r.name) > 0.3
+			   OR r.name ILIKE '%' || sq.raw_query || '%'
 		)
 		UNION ALL
 		(
-			SELECT 
+			SELECT
 				'dish' as type,
 				mi.id,
 				mi.name,
 				mi.restaurant_id,
 				r.name as restaurant_name,
 				mi.price,
-				ts_rank(mi.name_search, plainto_tsquery('english', $1)) as relevance
+				GREATEST(
+					COALESCE(ts_rank(mi.name_search, to_tsquery('english', sq.prefix_query)), 0),
+					word_similarity(sq.raw_query, mi.name)
+				) as relevance
 			FROM menu_items mi
 			INNER JOIN restaurants r ON r.id = mi.restaurant_id
+			CROSS JOIN search_query sq
 			WHERE mi.is_active = TRUE
-			AND mi.name_search @@ plainto_tsquery('english', $1)
+			AND (
+				mi.name_search @@ to_tsquery('english', sq.prefix_query)
+				OR word_similarity(sq.raw_query, mi.name) > 0.3
+				OR mi.name ILIKE '%' || sq.raw_query || '%'
+			)
 		)
 		ORDER BY relevance DESC, name
 		LIMIT $2

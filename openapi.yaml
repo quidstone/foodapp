@@ -1,0 +1,318 @@
+openapi: 3.0.3
+info:
+  title: Food Delivery Backend API
+  version: "0.1.0"
+  description: >
+    API for searching restaurants and dishes, checking opening hours, and processing purchases.
+servers:
+  - url: http://localhost:8080
+paths:
+  /health:
+    get:
+      summary: Health check
+      responses:
+        "200":
+          description: OK
+          content:
+            text/plain:
+              schema:
+                type: string
+  /metrics:
+    get:
+      summary: Get API and DB metrics
+      description: Returns in-memory metrics collected for API endpoints and database queries.
+      responses:
+        "200":
+          description: Metrics payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MetricsResponse"
+  /restaurants/open:
+    get:
+      summary: List restaurants open at a specific datetime
+      parameters:
+        - in: query
+          name: datetime
+          required: true
+          schema:
+            type: string
+            format: date-time
+          description: RFC3339 timestamp (e.g., 2024-01-15T14:30:00Z)
+      responses:
+        "200":
+          description: Restaurants open at the given time
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Restaurant"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /restaurants/top:
+    get:
+      summary: List restaurants filtered by dish count within a price range
+      parameters:
+        - in: query
+          name: limit
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+        - in: query
+          name: dish_count
+          required: true
+          schema:
+            type: integer
+            minimum: 0
+        - in: query
+          name: min_price
+          required: true
+          schema:
+            type: number
+            format: double
+            minimum: 0
+        - in: query
+          name: max_price
+          required: true
+          schema:
+            type: number
+            format: double
+            minimum: 0
+        - in: query
+          name: comparison
+          required: false
+          schema:
+            type: string
+            enum: [more, less]
+          description: >
+            Whether to filter restaurants with more or fewer dishes than dish_count. Defaults to "more".
+      responses:
+        "200":
+          description: Matching restaurants ordered alphabetically
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RestaurantWithDishCount"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /search:
+    get:
+      summary: Search restaurants and dishes by name
+      parameters:
+        - in: query
+          name: q
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            default: 20
+            minimum: 1
+      responses:
+        "200":
+          description: Results ranked by relevance
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SearchResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /purchase:
+    post:
+      summary: Process a user purchasing dishes (single restaurant) with idempotency support
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: false
+          schema:
+            type: string
+            format: uuid
+          description: >
+            Optional unique key (UUID) to ensure idempotency. If a request with the same key
+            was already processed, the original response is returned without creating a duplicate order.
+            Recommended for production use to safely handle retries.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PurchaseRequest"
+      responses:
+        "200":
+          description: Purchase succeeded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchaseResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+components:
+  schemas:
+    Restaurant:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        cash_balance:
+          type: number
+          format: double
+        timezone:
+          type: string
+    RestaurantWithDishCount:
+      allOf:
+        - $ref: "#/components/schemas/Restaurant"
+        - type: object
+          properties:
+            dish_count:
+              type: integer
+    SearchResult:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [restaurant, dish]
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        restaurant_id:
+          type: integer
+          format: int64
+          nullable: true
+        restaurant_name:
+          type: string
+          nullable: true
+        price:
+          type: number
+          format: double
+          nullable: true
+        relevance:
+          type: number
+          format: double
+    PurchaseRequest:
+      type: object
+      required: [user_id, items]
+      properties:
+        user_id:
+          type: integer
+          format: int64
+        items:
+          type: array
+          minItems: 1
+          description: All items must belong to the same restaurant.
+          items:
+            $ref: "#/components/schemas/PurchaseItem"
+    PurchaseResult:
+      type: object
+      properties:
+        order_id:
+          type: integer
+          format: int64
+        user_id:
+          type: integer
+          format: int64
+        restaurant_id:
+          type: integer
+          format: int64
+        total_amount:
+          type: number
+          format: double
+        message:
+          type: string
+    PurchaseItem:
+      type: object
+      required: [menu_item_id, quantity]
+      properties:
+        menu_item_id:
+          type: integer
+          format: int64
+        quantity:
+          type: integer
+          minimum: 1
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+    DurationString:
+      type: string
+      description: Duration formatted string (e.g., "1.2ms", "250ms").
+    APIMetrics:
+      type: object
+      properties:
+        endpoint:
+          type: string
+        request_count:
+          type: integer
+          format: int64
+        total_response_time:
+          $ref: "#/components/schemas/DurationString"
+        min_response_time:
+          $ref: "#/components/schemas/DurationString"
+        max_response_time:
+          $ref: "#/components/schemas/DurationString"
+        error_count:
+          type: integer
+          format: int64
+        last_updated:
+          type: string
+          format: date-time
+    DBQueryMetrics:
+      type: object
+      properties:
+        query:
+          type: string
+        execution_count:
+          type: integer
+          format: int64
+        total_duration:
+          $ref: "#/components/schemas/DurationString"
+        min_duration:
+          $ref: "#/components/schemas/DurationString"
+        max_duration:
+          $ref: "#/components/schemas/DurationString"
+        error_count:
+          type: integer
+          format: int64
+        last_updated:
+          type: string
+          format: date-time
+    MetricsResponse:
+      type: object
+      properties:
+        api_metrics:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/APIMetrics"
+        db_metrics:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/DBQueryMetrics"
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"

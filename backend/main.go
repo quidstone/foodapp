@@ -8,11 +8,13 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 	"github.com/quidstone/foodapp-backend/internal/db"
+	"github.com/quidstone/foodapp-backend/internal/metrics"
 )
 
 func main() {
@@ -42,19 +44,73 @@ func main() {
 	}
 	log.Println("connected to Postgres")
 
-	// Initialize repositories
-	restaurantRepo := db.NewRestaurantRepository(sqlxDB)
-	userRepo := db.NewUserRepository(sqlxDB)
+	// Initialize metrics collector
+	metricsCollector := metrics.NewMetricsCollector()
+
+	// Initialize cache (optional - set to nil to disable caching)
+	// Default TTL: 5 minutes, Cleanup interval: 1 minute
+	var cache db.Cache
+	if getenv("ENABLE_CACHE", "false") == "true" {
+		cacheTTL := 5 * time.Minute
+		cleanupInterval := 1 * time.Minute
+		cache = db.NewMemoryCache(cacheTTL, cleanupInterval)
+		log.Println("database query cache enabled")
+	}
+
+	// Wrap database with metrics tracking and optional caching
+	var wrappedDB *db.DBWrapper
+	if cache != nil {
+		wrappedDB = db.NewDBWrapperWithCache(sqlxDB, metricsCollector, cache, 5*time.Minute)
+	} else {
+		wrappedDB = db.NewDBWrapper(sqlxDB, metricsCollector)
+	}
+
+	// Initialize repositories with wrapped DB
+	restaurantRepo := db.NewRestaurantRepository(wrappedDB)
+	userRepo := db.NewUserRepository(wrappedDB)
+
+	// Create a mux for applying middleware
+	mux := http.NewServeMux()
 
 	// Handlers
-	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		// Check database connectivity with a timeout
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+
+		if err := sqlxDB.PingContext(ctx); err != nil {
+			log.Printf("Health check failed: database ping error: %v", err)
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte("database unavailable"))
+			return
+		}
+
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
 
+	// GET /metrics - Returns collected metrics
+	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		metricsData := map[string]interface{}{
+			"api_metrics": metricsCollector.GetAPIMetrics(),
+			"db_metrics":  metricsCollector.GetDBMetrics(),
+		}
+		if err := json.NewEncoder(w).Encode(metricsData); err != nil {
+			log.Printf("Error encoding metrics: %v", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+	})
+
 	// GET /restaurants/open?datetime=2024-01-15T14:30:00Z
 	// Returns all restaurants open at the given datetime
-	http.HandleFunc("/restaurants/open", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/restaurants/open", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
@@ -97,7 +153,7 @@ func main() {
 
 	// GET /restaurants/top?limit=10&dish_count=5&min_price=10&max_price=50&comparison=more
 	// Returns top y restaurants that have more/less than x dishes within price range, ranked alphabetically
-	http.HandleFunc("/restaurants/top", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/restaurants/top", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
@@ -162,7 +218,7 @@ func main() {
 
 	// GET /search?q=pizza&limit=20
 	// Searches for restaurants and dishes by name, ranked by relevance
-	http.HandleFunc("/search", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/search", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
@@ -203,9 +259,10 @@ func main() {
 	})
 
 	// POST /purchase
-	// Processes a user purchasing a dish from a restaurant
-	// Body: {"user_id": 1, "menu_item_id": 123, "quantity": 2}
-	http.HandleFunc("/purchase", func(w http.ResponseWriter, r *http.Request) {
+	// Processes a user purchasing dishes from a restaurant
+	// Body: {"user_id": 1, "items": [{"menu_item_id": 123, "quantity": 2}, {"menu_item_id": 456, "quantity": 1}]}
+	// Header: Idempotency-Key (optional) - UUID to prevent duplicate orders on retry
+	mux.HandleFunc("/purchase", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
@@ -218,37 +275,51 @@ func main() {
 			return
 		}
 
+		// Extract idempotency key from header (optional)
+		purchaseReq.IdempotencyKey = r.Header.Get("Idempotency-Key")
+
 		// Validate required fields
 		if purchaseReq.UserID <= 0 {
 			http.Error(w, "Invalid user_id", http.StatusBadRequest)
 			return
 		}
-		if purchaseReq.MenuItemID <= 0 {
-			http.Error(w, "Invalid menu_item_id", http.StatusBadRequest)
+
+		// Validate items
+		if len(purchaseReq.Items) == 0 {
+			http.Error(w, "items array cannot be empty", http.StatusBadRequest)
 			return
 		}
-		if purchaseReq.Quantity <= 0 {
-			http.Error(w, "Invalid quantity (must be > 0)", http.StatusBadRequest)
-			return
+		for i, item := range purchaseReq.Items {
+			if item.MenuItemID <= 0 {
+				http.Error(w, fmt.Sprintf("Invalid menu_item_id at index %d", i), http.StatusBadRequest)
+				return
+			}
+			if item.Quantity <= 0 {
+				http.Error(w, fmt.Sprintf("Invalid quantity at index %d (must be > 0)", i), http.StatusBadRequest)
+				return
+			}
 		}
 
 		// Process purchase
 		result, err := userRepo.PurchaseDish(purchaseReq)
 		if err != nil {
+			errMsg := err.Error()
 			// Check for specific error types
-			if err.Error() == "user not found" ||
-				err.Error() == "menu item not found" ||
-				err.Error() == "menu item is not active" {
-				http.Error(w, err.Error(), http.StatusNotFound)
+			switch {
+			case errMsg == "user not found",
+				strings.HasPrefix(errMsg, "menu item not found"),
+				strings.HasPrefix(errMsg, "menu item is not active"),
+				strings.HasPrefix(errMsg, "no items specified"):
+				http.Error(w, errMsg, http.StatusNotFound)
+				return
+			case strings.HasPrefix(errMsg, "insufficient balance"):
+				http.Error(w, errMsg, http.StatusBadRequest)
+				return
+			default:
+				log.Printf("Error processing purchase: %v", err)
+				http.Error(w, "Internal server error", http.StatusInternalServerError)
 				return
 			}
-			if err.Error()[:18] == "insufficient balance" {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			log.Printf("Error processing purchase: %v", err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
-			return
 		}
 
 		// Return success response
@@ -260,8 +331,11 @@ func main() {
 		}
 	})
 
+	// Apply metrics middleware to all routes
+	handler := metrics.Middleware(metricsCollector)(mux)
+
 	log.Printf("listening on :%s\n", port)
-	if err := http.ListenAndServe(":"+port, nil); err != nil {
+	if err := http.ListenAndServe(":"+port, handler); err != nil {
 		log.Fatalf("server error: %v", err)
 	}
 }

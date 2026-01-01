@@ -2,7 +2,9 @@
 import os
 import json
 import re
-from datetime import datetime, time
+import time
+from datetime import datetime
+from datetime import time as dt_time
 from decimal import Decimal
 
 import psycopg2
@@ -24,6 +26,36 @@ def load_json(path: str):
     print(f"Loading JSON from {path} ...")
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
+
+
+def wait_for_db(max_retries=30, retry_delay=2):
+    """
+    Wait for the database to be ready by attempting to connect.
+    Retries with exponential backoff.
+    """
+    print(f"Waiting for database at {DB_HOST}:{DB_PORT} to be ready...")
+    for attempt in range(max_retries):
+        try:
+            conn = psycopg2.connect(
+                host=DB_HOST,
+                port=DB_PORT,
+                user=DB_USER,
+                password=DB_PASSWORD,
+                dbname=DB_NAME,
+                connect_timeout=5,
+            )
+            conn.close()
+            print("✅ Database is ready!")
+            return True
+        except psycopg2.OperationalError as e:
+            if attempt < max_retries - 1:
+                wait_time = retry_delay * (2 ** min(attempt, 4))  # Exponential backoff, max 16s
+                print(f"⏳ Database not ready yet (attempt {attempt + 1}/{max_retries}), retrying in {wait_time}s...")
+                time.sleep(wait_time)
+            else:
+                print(f"❌ Failed to connect to database after {max_retries} attempts: {e}")
+                raise
+    return False
 
 
 def connect_db():
@@ -258,8 +290,8 @@ def parse_opening_hours(opening_hours_str: str):
         elif close_ampm == "am" and close_hour == 12:
             close_hour = 0
         
-        open_time = time(open_hour, open_min)
-        close_time = time(close_hour, close_min)
+        open_time = dt_time(open_hour, open_min)
+        close_time = dt_time(close_hour, close_min)
         
         # Determine if overnight (close_time < open_time means it spans to next day)
         is_overnight = close_time < open_time
@@ -326,8 +358,8 @@ def parse_opening_hours(opening_hours_str: str):
                 # - First day: open_time to 23:59:59
                 # - Last day: 00:00:00 to close_time
                 # - Middle days: 00:00:00 to 23:59:59 (full day)
-                end_of_day = time(23, 59, 59)
-                start_of_day = time(0, 0, 0)
+                end_of_day = dt_time(23, 59, 59)
+                start_of_day = dt_time(0, 0, 0)
                 
                 if idx == 0:
                     # First day: open_time to 23:59:59
@@ -541,6 +573,9 @@ def insert_orders_from_purchase_history(conn, users_data,
 
 
 def main():
+    # Wait for database to be ready
+    wait_for_db()
+    
     restaurants_data = load_json(RESTAURANTS_JSON)
     users_data = load_json(USERS_JSON)
 

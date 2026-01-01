@@ -1,5 +1,8 @@
 -- db/init.sql
 
+-- Enable trigram extension for fuzzy search
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
 CREATE TABLE users (
     id           BIGINT PRIMARY KEY,
     name         TEXT NOT NULL,
@@ -63,9 +66,24 @@ CREATE TABLE order_items (
 
 CREATE INDEX idx_order_items_order ON order_items (order_id);
 
+-- Idempotency keys for purchase requests to prevent duplicate orders
+CREATE TABLE purchase_idempotency_keys (
+    key         TEXT PRIMARY KEY,
+    user_id     BIGINT NOT NULL REFERENCES users(id),
+    response    JSONB NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_purchase_idempotency_keys_created ON purchase_idempotency_keys (created_at);
+CREATE INDEX idx_purchase_idempotency_keys_user ON purchase_idempotency_keys (user_id);
+
 -- Full-text search indexes (GIN indexes for fast text search)
 CREATE INDEX idx_restaurants_name_search ON restaurants USING GIN (name_search);
 CREATE INDEX idx_menu_items_name_search ON menu_items USING GIN (name_search);
+
+-- Trigram indexes for fuzzy/typo-tolerant search
+CREATE INDEX idx_restaurants_name_trgm ON restaurants USING GIN (name gin_trgm_ops);
+CREATE INDEX idx_menu_items_name_trgm ON menu_items USING GIN (name gin_trgm_ops);
 
 -- Triggers to automatically update tsvector columns when name changes
 CREATE OR REPLACE FUNCTION update_restaurant_search_vector()
