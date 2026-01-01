@@ -1,0 +1,177 @@
+{
+  "info": {
+    "name": "foodapp",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "list restaurant with time range",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "auth": {
+          "type": "noauth"
+        },
+        "description": "",
+        "url": {
+          "raw": "http://localhost:8080/restaurants/open?datetime=2024-01-15T14:30:00Z",
+          "protocol": "http",
+          "host": [
+            "localhost:8080"
+          ],
+          "path": [
+            "restaurants",
+            "open"
+          ],
+          "query": [
+            {
+              "key": "datetime",
+              "value": "2024-01-15T14:30:00Z"
+            }
+          ],
+          "variable": []
+        }
+      }
+    },
+    {
+      "name": "list restaurant with x dish",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "auth": {
+          "type": "noauth"
+        },
+        "description": "",
+        "url": {
+          "raw": "http://localhost:8080/restaurants/top?limit=10&dish_count=5&min_price=10&max_price=50&comparison=more",
+          "protocol": "http",
+          "host": [
+            "localhost:8080"
+          ],
+          "path": [
+            "restaurants",
+            "top"
+          ],
+          "query": [
+            {
+              "key": "limit",
+              "value": "10"
+            },
+            {
+              "key": "dish_count",
+              "value": "5"
+            },
+            {
+              "key": "min_price",
+              "value": "10"
+            },
+            {
+              "key": "max_price",
+              "value": "50"
+            },
+            {
+              "key": "comparison",
+              "value": "more"
+            }
+          ],
+          "variable": []
+        }
+      }
+    },
+    {
+      "name": "purchase",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Idempotency-Key",
+            "value": "c1415ad9-22d2-44d0-a527-ae515ed15664",
+            "disabled": false,
+            "type": "default"
+          }
+        ],
+        "auth": {
+          "type": "noauth"
+        },
+        "description": "",
+        "url": {
+          "raw": "http://localhost:8080/purchase",
+          "protocol": "http",
+          "host": [
+            "localhost:8080"
+          ],
+          "path": [
+            "purchase"
+          ],
+          "query": [],
+          "variable": []
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"user_id\": 477,\n  \"items\":\n  [\n    { \"menu_item_id\":25, \"quantity\": 2}\n  ]\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "search restaurant or dish",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "auth": {
+          "type": "noauth"
+        },
+        "description": "",
+        "url": {
+          "raw": "http://localhost:8080/search?q=pizza&limit=20",
+          "protocol": "http",
+          "host": [
+            "localhost:8080"
+          ],
+          "path": [
+            "search"
+          ],
+          "query": [
+            {
+              "key": "q",
+              "value": "pizza"
+            },
+            {
+              "key": "limit",
+              "value": "20"
+            }
+          ],
+          "variable": []
+        }
+      }
+    },
+    {
+      "name": "metrics",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "auth": {
+          "type": "noauth"
+        },
+        "description": "",
+        "url": {
+          "raw": "http://localhost:8080/metrics",
+          "protocol": "http",
+          "host": [
+            "localhost:8080"
+          ],
+          "path": [
+            "metrics"
+          ],
+          "query": [],
+          "variable": []
+        }
+      }
+    }
+  ],
+  "variable": []
+}

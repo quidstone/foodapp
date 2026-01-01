@@ -28,9 +28,12 @@ python3 etl_load_data.py
 
 The script exits on connection failure, but continues past individual bad rows while logging counts of skips/failures for restaurants, menu items, users, opening hours, and purchase history.
 
+## Testing
+- Tests cover the pure helpers (opening hours parsing and transaction datetime parsing).
+- From `ETL/`: `python -m pytest`
+
 ## Notes and expectations
 - Assumes schema from `db/init.sql` exists (tables: restaurants, menu_items, restaurant_opening_hours, users, orders, order_items).
 - Decimal parsing protects against float rounding when loading currency values.
 - Overnight opening hours are split into two days; multi-day ranges also split into per-day rows.
 - Order creation uses total amount as both unit and line amounts with quantity fixed at 1 (matches the input dataset shape).
-

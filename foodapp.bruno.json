@@ -1,0 +1,236 @@
+{
+  "name": "foodapp",
+  "version": "1",
+  "items": [
+    {
+      "type": "http",
+      "name": "list restaurant with time range",
+      "filename": "list restaurant with time range.bru",
+      "seq": 1,
+      "settings": {
+        "encodeUrl": true,
+        "timeout": 0
+      },
+      "tags": [],
+      "examples": [],
+      "request": {
+        "url": "http://localhost:8080/restaurants/open?datetime=2024-01-15T14:30:00Z",
+        "method": "GET",
+        "headers": [],
+        "params": [
+          {
+            "name": "datetime",
+            "value": "2024-01-15T14:30:00Z",
+            "type": "query",
+            "enabled": true
+          }
+        ],
+        "body": {
+          "mode": "none",
+          "formUrlEncoded": [],
+          "multipartForm": [],
+          "file": []
+        },
+        "script": {},
+        "vars": {},
+        "assertions": [],
+        "tests": "",
+        "docs": "",
+        "auth": {
+          "mode": "inherit"
+        }
+      }
+    },
+    {
+      "type": "http",
+      "name": "list restaurant with x dish",
+      "filename": "list restaurant with x dish.bru",
+      "seq": 2,
+      "settings": {
+        "encodeUrl": true,
+        "timeout": 0
+      },
+      "tags": [],
+      "examples": [],
+      "request": {
+        "url": "http://localhost:8080/restaurants/top?limit=10&dish_count=5&min_price=10&max_price=50&comparison=more",
+        "method": "GET",
+        "headers": [],
+        "params": [
+          {
+            "name": "limit",
+            "value": "10",
+            "type": "query",
+            "enabled": true
+          },
+          {
+            "name": "dish_count",
+            "value": "5",
+            "type": "query",
+            "enabled": true
+          },
+          {
+            "name": "min_price",
+            "value": "10",
+            "type": "query",
+            "enabled": true
+          },
+          {
+            "name": "max_price",
+            "value": "50",
+            "type": "query",
+            "enabled": true
+          },
+          {
+            "name": "comparison",
+            "value": "more",
+            "type": "query",
+            "enabled": true
+          }
+        ],
+        "body": {
+          "mode": "none",
+          "formUrlEncoded": [],
+          "multipartForm": [],
+          "file": []
+        },
+        "script": {},
+        "vars": {},
+        "assertions": [],
+        "tests": "",
+        "docs": "",
+        "auth": {
+          "mode": "inherit"
+        }
+      }
+    },
+    {
+      "type": "http",
+      "name": "purchase",
+      "filename": "purchase.bru",
+      "seq": 4,
+      "settings": {
+        "encodeUrl": true,
+        "timeout": 0
+      },
+      "tags": [],
+      "examples": [],
+      "request": {
+        "url": "http://localhost:8080/purchase",
+        "method": "POST",
+        "headers": [
+          {
+            "name": "Idempotency-Key",
+            "value": "c1415ad9-22d2-44d0-a527-ae515ed15664",
+            "enabled": true
+          }
+        ],
+        "params": [],
+        "body": {
+          "mode": "json",
+          "json": "{\n  \"user_id\": 477,\n  \"items\":\n  [\n    { \"menu_item_id\":25, \"quantity\": 2}\n  ]\n}",
+          "formUrlEncoded": [],
+          "multipartForm": [],
+          "file": []
+        },
+        "script": {},
+        "vars": {},
+        "assertions": [],
+        "tests": "",
+        "docs": "",
+        "auth": {
+          "mode": "inherit"
+        }
+      }
+    },
+    {
+      "type": "http",
+      "name": "search restaurant or dish",
+      "filename": "search restaurant or dish.bru",
+      "seq": 3,
+      "settings": {
+        "encodeUrl": true,
+        "timeout": 0
+      },
+      "tags": [],
+      "examples": [],
+      "request": {
+        "url": "http://localhost:8080/search?q=pizza&limit=20",
+        "method": "GET",
+        "headers": [],
+        "params": [
+          {
+            "name": "q",
+            "value": "pizza",
+            "type": "query",
+            "enabled": true
+          },
+          {
+            "name": "limit",
+            "value": "20",
+            "type": "query",
+            "enabled": true
+          }
+        ],
+        "body": {
+          "mode": "none",
+          "formUrlEncoded": [],
+          "multipartForm": [],
+          "file": []
+        },
+        "script": {},
+        "vars": {},
+        "assertions": [],
+        "tests": "",
+        "docs": "",
+        "auth": {
+          "mode": "inherit"
+        }
+      }
+    },
+    {
+      "type": "http",
+      "name": "metrics",
+      "filename": "metrics.bru",
+      "seq": 5,
+      "settings": {
+        "encodeUrl": true,
+        "timeout": 0
+      },
+      "tags": [],
+      "examples": [],
+      "request": {
+        "url": "http://localhost:8080/metrics",
+        "method": "GET",
+        "headers": [],
+        "params": [],
+        "body": {
+          "mode": "none",
+          "formUrlEncoded": [],
+          "multipartForm": [],
+          "file": []
+        },
+        "script": {},
+        "vars": {},
+        "assertions": [],
+        "tests": "",
+        "docs": "",
+        "auth": {
+          "mode": "inherit"
+        }
+      }
+    }
+  ],
+  "environments": [],
+  "brunoConfig": {
+    "version": "1",
+    "name": "foodapp",
+    "type": "collection",
+    "ignore": [
+      "node_modules",
+      ".git"
+    ],
+    "size": 0.0010805130004882812,
+    "filesCount": 4
+  }
+}
