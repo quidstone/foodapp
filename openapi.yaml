@@ -27,7 +27,16 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/MetricsResponse"
+                allOf:
+                  - $ref: "#/components/schemas/Response"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/MetricsResponse"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
   /restaurants/open:
     get:
       summary: List restaurants open at a specific datetime
@@ -45,11 +54,20 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/Restaurant"
+                allOf:
+                  - $ref: "#/components/schemas/Response"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Restaurant"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
   /restaurants/top:
     get:
       summary: List restaurants filtered by dish count within a price range
@@ -94,11 +112,20 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/RestaurantWithDishCount"
+                allOf:
+                  - $ref: "#/components/schemas/Response"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/RestaurantWithDishCount"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
   /search:
     get:
       summary: Search restaurants and dishes by name
@@ -121,11 +148,20 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/SearchResult"
+                allOf:
+                  - $ref: "#/components/schemas/Response"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/SearchResult"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
   /purchase:
     post:
       summary: Process a user purchasing dishes (single restaurant) with idempotency support
@@ -152,13 +188,38 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/PurchaseResult"
+                allOf:
+                  - $ref: "#/components/schemas/Response"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/PurchaseResult"
         "400":
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
 components:
   schemas:
+    Response:
+      type: object
+      description: |
+        API response wrapper. Success responses contain only the "data" key.
+        Error responses contain only the "error" key. Never both.
+      properties:
+        data:
+          description: Response data (present only in success responses, never in error responses)
+        error:
+          type: string
+          description: Error message (present only in error responses, never in success responses)
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
     Restaurant:
       type: object
       properties:
@@ -168,8 +229,7 @@ components:
         name:
           type: string
         cash_balance:
-          type: number
-          format: double
+          type: string
         timezone:
           type: string
     RestaurantWithDishCount:
@@ -198,8 +258,7 @@ components:
           type: string
           nullable: true
         price:
-          type: number
-          format: double
+          type: string
           nullable: true
         relevance:
           type: number
@@ -244,11 +303,6 @@ components:
         quantity:
           type: integer
           minimum: 1
-    Error:
-      type: object
-      properties:
-        error:
-          type: string
     DurationString:
       type: string
       description: Duration formatted string (e.g., "1.2ms", "250ms").
@@ -312,6 +366,18 @@ components:
             $ref: "#/components/schemas/Error"
     NotFound:
       description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    MethodNotAllowed:
+      description: Method not allowed
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    InternalServerError:
+      description: Internal server error
       content:
         application/json:
           schema:

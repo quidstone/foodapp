@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/jmoiron/sqlx"
 	"github.com/quidstone/foodapp-backend/internal/db"
+	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -56,20 +58,20 @@ func TestRestaurantsOpenEndpoint(t *testing.T) {
 	// Create handler
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
 			return
 		}
 
 		datetimeStr := r.URL.Query().Get("datetime")
 		if datetimeStr == "" {
-			http.Error(w, "Missing required query parameter: datetime", http.StatusBadRequest)
+			writeError(w, http.StatusBadRequest, "Missing required query parameter: datetime")
 			return
 		}
 
 		datetime, _ := time.Parse(time.RFC3339, datetimeStr)
 		restaurants, err := restaurantRepo.FindOpenAtTime(datetime)
 		if err != nil {
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			writeError(w, http.StatusInternalServerError, "Internal server error")
 			return
 		}
 
@@ -107,6 +109,14 @@ func TestRestaurantsOpenEndpoint(t *testing.T) {
 			handler(w, req)
 
 			assert.Equal(t, tt.expectedStatus, w.Code)
+			if tt.expectedStatus != http.StatusOK {
+				// Verify JSON error response
+				assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
+				var apiErr Response
+				err := json.Unmarshal(w.Body.Bytes(), &apiErr)
+				assert.NoError(t, err)
+				assert.NotEmpty(t, apiErr.Error)
+			}
 		})
 	}
 }
@@ -120,19 +130,19 @@ func TestRestaurantsTopEndpoint(t *testing.T) {
 
 	// Mock the database query
 	mock.ExpectQuery(`SELECT r.id, r.name, r.cash_balance, r.timezone, COUNT\(mi.id\) as dish_count`).
-		WithArgs(10.0, 50.0, 5, 10).
+		WithArgs(decimal.NewFromFloat(10.0), decimal.NewFromFloat(50.0), 5, 10).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "cash_balance", "timezone", "dish_count"}).
 			AddRow(1, "Restaurant A", 1000.0, "UTC", 8))
 
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
 			return
 		}
 
-		restaurants, err := restaurantRepo.FindTopByDishCount(10, 5, 10.0, 50.0, "more")
+		restaurants, err := restaurantRepo.FindTopByDishCount(10, 5, decimal.NewFromFloat(10.0), decimal.NewFromFloat(50.0), "more")
 		if err != nil {
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			writeError(w, http.StatusInternalServerError, "Internal server error")
 			return
 		}
 
@@ -169,19 +179,19 @@ func TestSearchEndpoint(t *testing.T) {
 
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
 			return
 		}
 
 		queryTerm := r.URL.Query().Get("q")
 		if queryTerm == "" {
-			http.Error(w, "Missing required query parameter: q", http.StatusBadRequest)
+			writeError(w, http.StatusBadRequest, "Missing required query parameter: q")
 			return
 		}
 
 		results, err := restaurantRepo.Search(queryTerm, 20)
 		if err != nil {
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			writeError(w, http.StatusInternalServerError, "Internal server error")
 			return
 		}
 
@@ -214,6 +224,14 @@ func TestSearchEndpoint(t *testing.T) {
 			handler(w, req)
 
 			assert.Equal(t, tt.expectedStatus, w.Code)
+			if tt.expectedStatus != http.StatusOK {
+				// Verify JSON error response
+				assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
+				var apiErr Response
+				err := json.Unmarshal(w.Body.Bytes(), &apiErr)
+				assert.NoError(t, err)
+				assert.NotEmpty(t, apiErr.Error)
+			}
 		})
 	}
 }
@@ -221,40 +239,54 @@ func TestSearchEndpoint(t *testing.T) {
 func TestPurchaseEndpoint(t *testing.T) {
 	handler := func(w http.ResponseWriter, r *http.Request, userRepo *db.UserRepository) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
 			return
 		}
 
 		var purchaseReq db.PurchaseRequest
 		if err := json.NewDecoder(r.Body).Decode(&purchaseReq); err != nil {
-			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("Invalid request body: %v", err))
 			return
 		}
 
 		// Validate request
 		if purchaseReq.UserID <= 0 {
-			http.Error(w, "Invalid user_id", http.StatusBadRequest)
+			writeError(w, http.StatusBadRequest, "Invalid user_id")
 			return
 		}
 		if len(purchaseReq.Items) == 0 {
-			http.Error(w, "items array cannot be empty", http.StatusBadRequest)
+			writeError(w, http.StatusBadRequest, "items array cannot be empty")
 			return
 		}
 		for i, item := range purchaseReq.Items {
 			if item.MenuItemID <= 0 {
-				http.Error(w, fmt.Sprintf("Invalid menu_item_id at index %d", i), http.StatusBadRequest)
+				writeError(w, http.StatusBadRequest, fmt.Sprintf("Invalid menu_item_id at index %d", i))
 				return
 			}
 			if item.Quantity <= 0 {
-				http.Error(w, fmt.Sprintf("Invalid quantity at index %d (must be > 0)", i), http.StatusBadRequest)
+				writeError(w, http.StatusBadRequest, fmt.Sprintf("Invalid quantity at index %d (must be > 0)", i))
 				return
 			}
 		}
 
 		result, err := userRepo.PurchaseDish(purchaseReq)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+			errMsg := err.Error()
+			// Check for specific error types (matching main.go logic)
+			switch {
+			case errMsg == "user not found",
+				strings.HasPrefix(errMsg, "menu item not found"),
+				strings.HasPrefix(errMsg, "menu item is not active"),
+				strings.HasPrefix(errMsg, "no items specified"):
+				writeError(w, http.StatusNotFound, errMsg)
+				return
+			case strings.HasPrefix(errMsg, "insufficient balance"):
+				writeError(w, http.StatusBadRequest, errMsg)
+				return
+			default:
+				writeError(w, http.StatusInternalServerError, "Internal server error")
+				return
+			}
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -391,6 +423,14 @@ func TestPurchaseEndpoint(t *testing.T) {
 			handler(w, req, userRepo)
 
 			assert.Equal(t, tt.expectedStatus, w.Code)
+			if tt.expectedStatus != http.StatusOK {
+				// Verify JSON error response
+				assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
+				var apiErr Response
+				err := json.Unmarshal(w.Body.Bytes(), &apiErr)
+				assert.NoError(t, err)
+				assert.NotEmpty(t, apiErr.Error)
+			}
 			if tt.setupMock != nil {
 				assert.NoError(t, mock.ExpectationsWereMet())
 			}

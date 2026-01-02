@@ -6,6 +6,7 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/jmoiron/sqlx"
+	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -31,8 +32,8 @@ func TestRestaurantRepository_FindOpenAtTime(t *testing.T) {
 			datetime: time.Date(2024, 1, 15, 14, 30, 0, 0, time.UTC),
 			// Mock returns in alphabetical order (as SQL ORDER BY would)
 			mockRows: sqlmock.NewRows([]string{"id", "name", "cash_balance", "timezone"}).
-				AddRow(2, "Burger Joint", 500.25, "America/New_York").
-				AddRow(1, "Pizza Place", 1000.50, "UTC"),
+				AddRow(2, "Burger Joint", decimal.NewFromFloat(500.25), "America/New_York").
+				AddRow(1, "Pizza Place", decimal.NewFromFloat(1000.50), "UTC"),
 			expectError: false,
 		},
 		{
@@ -90,8 +91,8 @@ func TestRestaurantRepository_FindTopByDishCount(t *testing.T) {
 		name        string
 		limit       int
 		dishCount   int
-		minPrice    float64
-		maxPrice    float64
+		minPrice    decimal.Decimal
+		maxPrice    decimal.Decimal
 		comparison  string
 		mockRows    *sqlmock.Rows
 		expectError bool
@@ -101,12 +102,12 @@ func TestRestaurantRepository_FindTopByDishCount(t *testing.T) {
 			name:       "success - more than threshold",
 			limit:      10,
 			dishCount:  5,
-			minPrice:   10.0,
-			maxPrice:   50.0,
+			minPrice:   decimal.NewFromFloat(10.0),
+			maxPrice:   decimal.NewFromFloat(50.0),
 			comparison: "more",
 			mockRows: sqlmock.NewRows([]string{"id", "name", "cash_balance", "timezone", "dish_count"}).
-				AddRow(1, "Restaurant A", 1000.0, "UTC", 8).
-				AddRow(2, "Restaurant B", 2000.0, "UTC", 6),
+				AddRow(1, "Restaurant A", decimal.NewFromFloat(1000.0), "UTC", 8).
+				AddRow(2, "Restaurant B", decimal.NewFromFloat(2000.0), "UTC", 6),
 			expectError: false,
 			expectedOp:  ">",
 		},
@@ -114,11 +115,11 @@ func TestRestaurantRepository_FindTopByDishCount(t *testing.T) {
 			name:       "success - less than threshold",
 			limit:      5,
 			dishCount:  10,
-			minPrice:   20.0,
-			maxPrice:   30.0,
+			minPrice:   decimal.NewFromFloat(20.0),
+			maxPrice:   decimal.NewFromFloat(30.0),
 			comparison: "less",
 			mockRows: sqlmock.NewRows([]string{"id", "name", "cash_balance", "timezone", "dish_count"}).
-				AddRow(1, "Small Restaurant", 500.0, "UTC", 3),
+				AddRow(1, "Small Restaurant", decimal.NewFromFloat(500.0), "UTC", 3),
 			expectError: false,
 			expectedOp:  "<",
 		},
@@ -126,11 +127,11 @@ func TestRestaurantRepository_FindTopByDishCount(t *testing.T) {
 			name:       "default comparison to more",
 			limit:      5,
 			dishCount:  5,
-			minPrice:   10.0,
-			maxPrice:   50.0,
+			minPrice:   decimal.NewFromFloat(10.0),
+			maxPrice:   decimal.NewFromFloat(50.0),
 			comparison: "invalid",
 			mockRows: sqlmock.NewRows([]string{"id", "name", "cash_balance", "timezone", "dish_count"}).
-				AddRow(1, "Restaurant", 1000.0, "UTC", 6),
+				AddRow(1, "Restaurant", decimal.NewFromFloat(1000.0), "UTC", 6),
 			expectError: false,
 			expectedOp:  ">",
 		},
@@ -187,7 +188,7 @@ func TestRestaurantRepository_Search(t *testing.T) {
 			limit:     20,
 			mockRows: sqlmock.NewRows([]string{"type", "id", "name", "restaurant_id", "restaurant_name", "price", "relevance"}).
 				AddRow("restaurant", 1, "Pizza Palace", nil, nil, nil, 0.8).
-				AddRow("dish", 10, "Margherita Pizza", 1, "Pizza Palace", 15.99, 0.9),
+				AddRow("dish", 10, "Margherita Pizza", 1, "Pizza Palace", decimal.NewFromFloat(15.99), 0.9),
 			expectError: false,
 		},
 		{

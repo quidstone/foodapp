@@ -3,7 +3,6 @@ package db
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -15,13 +14,10 @@ type QueryRecorder interface {
 	RecordDBQuery(query string, duration time.Duration, hasError bool)
 }
 
-// DBWrapper wraps sqlx.DB to track query execution times and optionally cache results
+// DBWrapper wraps sqlx.DB to track query execution times
 type DBWrapper struct {
 	db       *sqlx.DB
 	recorder QueryRecorder
-	cache    Cache
-	// Default TTL for cached queries (0 = use cache's default)
-	defaultCacheTTL time.Duration
 }
 
 // NewDBWrapper creates a new database wrapper with metrics tracking
@@ -32,47 +28,13 @@ func NewDBWrapper(db *sqlx.DB, recorder QueryRecorder) *DBWrapper {
 	}
 }
 
-// NewDBWrapperWithCache creates a new database wrapper with metrics tracking and caching
-func NewDBWrapperWithCache(db *sqlx.DB, recorder QueryRecorder, cache Cache, defaultCacheTTL time.Duration) *DBWrapper {
-	return &DBWrapper{
-		db:              db,
-		recorder:        recorder,
-		cache:           cache,
-		defaultCacheTTL: defaultCacheTTL,
-	}
-}
-
-// SetCache sets the cache for the wrapper
-func (w *DBWrapper) SetCache(cache Cache, defaultTTL time.Duration) {
-	w.cache = cache
-	w.defaultCacheTTL = defaultTTL
-}
-
 // GetDB returns the underlying sqlx.DB (for methods not wrapped yet)
 func (w *DBWrapper) GetDB() *sqlx.DB {
 	return w.db
 }
 
 // Select executes a query and scans the results into dest, tracking execution time
-// If caching is enabled and the query is read-only, it will check the cache first
 func (w *DBWrapper) Select(dest interface{}, query string, args ...interface{}) error {
-	// Check cache if enabled and query is read-only
-	if w.cache != nil && isReadOnlyQuery(query) {
-		cacheKey := generateCacheKey(query, args...)
-		if cached, found := w.cache.Get(cacheKey); found {
-			// Cache hit - unmarshal and return
-			if err := json.Unmarshal(cached, dest); err == nil {
-				// Record cache hit with minimal duration
-				if w.recorder != nil {
-					w.recorder.RecordDBQuery(normalizeQuery(query), 0, false)
-				}
-				return nil
-			}
-			// If unmarshal fails, fall through to database query
-		}
-	}
-
-	// Cache miss or cache disabled - execute query
 	start := time.Now()
 	err := w.db.Select(dest, query, args...)
 	duration := time.Since(start)
@@ -84,39 +46,11 @@ func (w *DBWrapper) Select(dest interface{}, query string, args ...interface{}) 
 		w.recorder.RecordDBQuery(normalizedQuery, duration, hasError)
 	}
 
-	// Cache the result if successful and caching is enabled
-	if err == nil && w.cache != nil && isReadOnlyQuery(query) {
-		if data, marshalErr := json.Marshal(dest); marshalErr == nil {
-			cacheKey := generateCacheKey(query, args...)
-			// Tag with table names for targeted invalidation
-			tables := extractTablesFromSelect(query)
-			w.cache.SetWithTags(cacheKey, data, w.defaultCacheTTL, tables)
-		}
-	}
-
 	return err
 }
 
 // Get executes a query and scans one row into dest, tracking execution time
-// If caching is enabled and the query is read-only, it will check the cache first
 func (w *DBWrapper) Get(dest interface{}, query string, args ...interface{}) error {
-	// Check cache if enabled and query is read-only
-	if w.cache != nil && isReadOnlyQuery(query) {
-		cacheKey := generateCacheKey(query, args...)
-		if cached, found := w.cache.Get(cacheKey); found {
-			// Cache hit - unmarshal and return
-			if err := json.Unmarshal(cached, dest); err == nil {
-				// Record cache hit with minimal duration
-				if w.recorder != nil {
-					w.recorder.RecordDBQuery(normalizeQuery(query), 0, false)
-				}
-				return nil
-			}
-			// If unmarshal fails, fall through to database query
-		}
-	}
-
-	// Cache miss or cache disabled - execute query
 	start := time.Now()
 	err := w.db.Get(dest, query, args...)
 	duration := time.Since(start)
@@ -128,21 +62,10 @@ func (w *DBWrapper) Get(dest interface{}, query string, args ...interface{}) err
 		w.recorder.RecordDBQuery(normalizedQuery, duration, hasError)
 	}
 
-	// Cache the result if successful and caching is enabled
-	if err == nil && w.cache != nil && isReadOnlyQuery(query) {
-		if data, marshalErr := json.Marshal(dest); marshalErr == nil {
-			cacheKey := generateCacheKey(query, args...)
-			// Tag with table names for targeted invalidation
-			tables := extractTablesFromSelect(query)
-			w.cache.SetWithTags(cacheKey, data, w.defaultCacheTTL, tables)
-		}
-	}
-
 	return err
 }
 
 // Exec executes a query without returning rows, tracking execution time
-// Write operations (INSERT, UPDATE, DELETE) will invalidate affected cache entries
 func (w *DBWrapper) Exec(query string, args ...interface{}) (sql.Result, error) {
 	start := time.Now()
 	result, err := w.db.Exec(query, args...)
@@ -153,15 +76,6 @@ func (w *DBWrapper) Exec(query string, args ...interface{}) (sql.Result, error) 
 	normalizedQuery := normalizeQuery(query)
 	if w.recorder != nil {
 		w.recorder.RecordDBQuery(normalizedQuery, duration, hasError)
-	}
-
-	// Invalidate cache entries for the affected table on write operations
-	if w.cache != nil && !isReadOnlyQuery(query) {
-		table := extractTableFromWrite(query)
-		if table != "" {
-			// Only invalidate cache entries tagged with this table
-			w.cache.DeleteByTag(table)
-		}
 	}
 
 	return result, err
@@ -216,23 +130,21 @@ func (w *DBWrapper) QueryRowx(query string, args ...interface{}) *sqlx.Row {
 }
 
 // Beginx starts a transaction, returning a wrapped transaction
-// Transactions don't use cache to ensure consistency
 func (w *DBWrapper) Beginx() (*TxWrapper, error) {
 	tx, err := w.db.Beginx()
 	if err != nil {
 		return nil, err
 	}
-	return NewTxWrapper(tx, w.recorder, w.cache), nil
+	return NewTxWrapper(tx, w.recorder), nil
 }
 
 // BeginTxx starts a transaction with context, returning a wrapped transaction
-// Transactions don't use cache to ensure consistency
 func (w *DBWrapper) BeginTxx(ctx context.Context, opts *sql.TxOptions) (*TxWrapper, error) {
 	tx, err := w.db.BeginTxx(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
-	return NewTxWrapper(tx, w.recorder, w.cache), nil
+	return NewTxWrapper(tx, w.recorder), nil
 }
 
 // PingContext pings the database with context
@@ -251,21 +163,16 @@ func (w *DBWrapper) Close() error {
 }
 
 // TxWrapper wraps sqlx.Tx to track query execution times in transactions
-// Transactions don't use cache to ensure consistency
 type TxWrapper struct {
-	tx             *sqlx.Tx
-	recorder       QueryRecorder
-	cache          Cache
-	modifiedTables map[string]struct{} // tracks tables modified in this transaction
+	tx       *sqlx.Tx
+	recorder QueryRecorder
 }
 
 // NewTxWrapper creates a new transaction wrapper with metrics tracking
-func NewTxWrapper(tx *sqlx.Tx, recorder QueryRecorder, cache Cache) *TxWrapper {
+func NewTxWrapper(tx *sqlx.Tx, recorder QueryRecorder) *TxWrapper {
 	return &TxWrapper{
-		tx:             tx,
-		recorder:       recorder,
-		cache:          cache,
-		modifiedTables: make(map[string]struct{}),
+		tx:       tx,
+		recorder: recorder,
 	}
 }
 
@@ -305,7 +212,6 @@ func (w *TxWrapper) Select(dest interface{}, query string, args ...interface{}) 
 }
 
 // Exec executes a query without returning rows, tracking execution time
-// Write operations in transactions will invalidate cache on commit
 func (w *TxWrapper) Exec(query string, args ...interface{}) (sql.Result, error) {
 	start := time.Now()
 	result, err := w.tx.Exec(query, args...)
@@ -317,27 +223,12 @@ func (w *TxWrapper) Exec(query string, args ...interface{}) (sql.Result, error) 
 		w.recorder.RecordDBQuery(normalizedQuery, duration, hasError)
 	}
 
-	// Track modified table for cache invalidation on commit
-	if !isReadOnlyQuery(query) {
-		table := extractTableFromWrite(query)
-		if table != "" {
-			w.modifiedTables[table] = struct{}{}
-		}
-	}
-
 	return result, err
 }
 
-// Commit commits the transaction and invalidates cache for modified tables
+// Commit commits the transaction
 func (w *TxWrapper) Commit() error {
-	err := w.tx.Commit()
-	// Invalidate cache entries for modified tables on successful commit
-	if err == nil && w.cache != nil && len(w.modifiedTables) > 0 {
-		for table := range w.modifiedTables {
-			w.cache.DeleteByTag(table)
-		}
-	}
-	return err
+	return w.tx.Commit()
 }
 
 // Rollback rolls back the transaction

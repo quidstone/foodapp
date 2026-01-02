@@ -2,14 +2,16 @@ package db
 
 import (
 	"time"
+
+	"github.com/shopspring/decimal"
 )
 
 // Restaurant represents a restaurant in the database
 type Restaurant struct {
-	ID          int64   `db:"id" json:"id"`
-	Name        string  `db:"name" json:"name"`
-	CashBalance float64 `db:"cash_balance" json:"cash_balance"`
-	Timezone    string  `db:"timezone" json:"timezone"`
+	ID          int64           `db:"id" json:"id"`
+	Name        string          `db:"name" json:"name"`
+	CashBalance decimal.Decimal `db:"cash_balance" json:"cash_balance"`
+	Timezone    string          `db:"timezone" json:"timezone"`
 }
 
 // RestaurantRepository handles restaurant-related database queries
@@ -25,7 +27,7 @@ func NewRestaurantRepository(db *DBWrapper) *RestaurantRepository {
 // FindOpenAtTime returns all restaurants that are open at the given datetime
 // The datetime is checked against each restaurant's timezone and opening hours
 func (r *RestaurantRepository) FindOpenAtTime(datetime time.Time) ([]Restaurant, error) {
-	var restaurants []Restaurant
+	restaurants := make([]Restaurant, 0)
 
 	// Query to find restaurants open at the given datetime
 	// We convert the input datetime to each restaurant's timezone,
@@ -70,8 +72,8 @@ type RestaurantWithDishCount struct {
 // FindTopByDishCount returns top y restaurants that have more or less than x dishes
 // within the specified price range, ranked alphabetically
 // comparison: "more" for > x, "less" for < x
-func (r *RestaurantRepository) FindTopByDishCount(limit int, dishCountThreshold int, minPrice, maxPrice float64, comparison string) ([]RestaurantWithDishCount, error) {
-	var restaurants []RestaurantWithDishCount
+func (r *RestaurantRepository) FindTopByDishCount(limit int, dishCountThreshold int, minPrice, maxPrice decimal.Decimal, comparison string) ([]RestaurantWithDishCount, error) {
+	restaurants := make([]RestaurantWithDishCount, 0)
 
 	// Use separate queries to avoid string concatenation of operators
 	// This eliminates any SQL injection risk from the comparison parameter
@@ -114,20 +116,20 @@ func (r *RestaurantRepository) FindTopByDishCount(limit int, dishCountThreshold 
 
 // SearchResult represents a search result (restaurant or dish)
 type SearchResult struct {
-	Type           string   `db:"type" json:"type"` // "restaurant" or "dish"
-	ID             int64    `db:"id" json:"id"`
-	Name           string   `db:"name" json:"name"`
-	RestaurantID   *int64   `db:"restaurant_id" json:"restaurant_id,omitempty"`
-	RestaurantName *string  `db:"restaurant_name" json:"restaurant_name,omitempty"`
-	Price          *float64 `db:"price" json:"price,omitempty"`
-	Relevance      float64  `db:"relevance" json:"relevance"`
+	Type           string           `db:"type" json:"type"` // "restaurant" or "dish"
+	ID             int64            `db:"id" json:"id"`
+	Name           string           `db:"name" json:"name"`
+	RestaurantID   *int64           `db:"restaurant_id" json:"restaurant_id,omitempty"`
+	RestaurantName *string          `db:"restaurant_name" json:"restaurant_name,omitempty"`
+	Price          *decimal.Decimal `db:"price" json:"price,omitempty"`
+	Relevance      float64          `db:"relevance" json:"relevance"`
 }
 
 // Search searches for restaurants and dishes by name using full-text search
 // with prefix matching and trigram similarity for typo tolerance.
 // Returns results ranked by relevance.
 func (r *RestaurantRepository) Search(queryTerm string, limit int) ([]SearchResult, error) {
-	var results []SearchResult
+	results := make([]SearchResult, 0)
 
 	// Combined search using:
 	// 1. Full-text search with prefix matching (e.g., "piz" matches "pizza")

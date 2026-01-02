@@ -15,6 +15,13 @@ import (
 	_ "github.com/lib/pq"
 	"github.com/quidstone/foodapp-backend/internal/db"
 	"github.com/quidstone/foodapp-backend/internal/metrics"
+	"github.com/shopspring/decimal"
+)
+
+// Comparison operators for restaurant dish count filtering
+const (
+	ComparisonMore = "more"
+	ComparisonLess = "less"
 )
 
 func main() {
@@ -47,23 +54,8 @@ func main() {
 	// Initialize metrics collector
 	metricsCollector := metrics.NewMetricsCollector()
 
-	// Initialize cache (optional - set to nil to disable caching)
-	// Default TTL: 5 minutes, Cleanup interval: 1 minute
-	var cache db.Cache
-	if getenv("ENABLE_CACHE", "false") == "true" {
-		cacheTTL := 5 * time.Minute
-		cleanupInterval := 1 * time.Minute
-		cache = db.NewMemoryCache(cacheTTL, cleanupInterval)
-		log.Println("database query cache enabled")
-	}
-
-	// Wrap database with metrics tracking and optional caching
-	var wrappedDB *db.DBWrapper
-	if cache != nil {
-		wrappedDB = db.NewDBWrapperWithCache(sqlxDB, metricsCollector, cache, 5*time.Minute)
-	} else {
-		wrappedDB = db.NewDBWrapper(sqlxDB, metricsCollector)
-	}
+	// Wrap database with metrics tracking
+	wrappedDB := db.NewDBWrapper(sqlxDB, metricsCollector)
 
 	// Initialize repositories with wrapped DB
 	restaurantRepo := db.NewRestaurantRepository(wrappedDB)
@@ -92,7 +84,7 @@ func main() {
 	// GET /metrics - Returns collected metrics
 	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
 			return
 		}
 
@@ -101,25 +93,21 @@ func main() {
 			"api_metrics": metricsCollector.GetAPIMetrics(),
 			"db_metrics":  metricsCollector.GetDBMetrics(),
 		}
-		if err := json.NewEncoder(w).Encode(metricsData); err != nil {
-			log.Printf("Error encoding metrics: %v", err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
-			return
-		}
+		writeResponse(w, metricsData, http.StatusOK)
 	})
 
 	// GET /restaurants/open?datetime=2024-01-15T14:30:00Z
 	// Returns all restaurants open at the given datetime
 	mux.HandleFunc("/restaurants/open", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
 			return
 		}
 
 		// Parse datetime query parameter
 		datetimeStr := r.URL.Query().Get("datetime")
 		if datetimeStr == "" {
-			http.Error(w, "Missing required query parameter: datetime", http.StatusBadRequest)
+			writeError(w, http.StatusBadRequest, "Missing required query parameter: datetime")
 			return
 		}
 
@@ -129,7 +117,7 @@ func main() {
 			// Try alternative formats
 			datetime, err = time.Parse("2006-01-02T15:04:05", datetimeStr)
 			if err != nil {
-				http.Error(w, fmt.Sprintf("Invalid datetime format. Use RFC3339 (e.g., 2024-01-15T14:30:00Z) or 2006-01-02T15:04:05: %v", err), http.StatusBadRequest)
+				writeError(w, http.StatusBadRequest, fmt.Sprintf("Invalid datetime format. Use RFC3339 (e.g., 2024-01-15T14:30:00Z) or 2006-01-02T15:04:05: %v", err))
 				return
 			}
 		}
@@ -138,24 +126,19 @@ func main() {
 		restaurants, err := restaurantRepo.FindOpenAtTime(datetime)
 		if err != nil {
 			log.Printf("Error querying open restaurants: %v", err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			writeError(w, http.StatusInternalServerError, "Internal server error")
 			return
 		}
 
 		// Return JSON response
-		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(restaurants); err != nil {
-			log.Printf("Error encoding response: %v", err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
-			return
-		}
+		writeResponse(w, restaurants, http.StatusOK)
 	})
 
 	// GET /restaurants/top?limit=10&dish_count=5&min_price=10&max_price=50&comparison=more
 	// Returns top y restaurants that have more/less than x dishes within price range, ranked alphabetically
 	mux.HandleFunc("/restaurants/top", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
 			return
 		}
 
@@ -167,66 +150,64 @@ func main() {
 		comparison := r.URL.Query().Get("comparison")
 
 		if limitStr == "" || dishCountStr == "" || minPriceStr == "" || maxPriceStr == "" {
-			http.Error(w, "Missing required query parameters: limit, dish_count, min_price, max_price", http.StatusBadRequest)
+			writeError(w, http.StatusBadRequest, "Missing required query parameters: limit, dish_count, min_price, max_price")
 			return
 		}
 
 		limit, err := strconv.Atoi(limitStr)
 		if err != nil || limit <= 0 {
-			http.Error(w, "Invalid limit parameter", http.StatusBadRequest)
+			writeError(w, http.StatusBadRequest, "Invalid limit parameter")
 			return
 		}
 
 		dishCount, err := strconv.Atoi(dishCountStr)
 		if err != nil || dishCount < 0 {
-			http.Error(w, "Invalid dish_count parameter", http.StatusBadRequest)
+			writeError(w, http.StatusBadRequest, "Invalid dish_count parameter")
 			return
 		}
 
 		minPrice, err := strconv.ParseFloat(minPriceStr, 64)
 		if err != nil || minPrice < 0 {
-			http.Error(w, "Invalid min_price parameter", http.StatusBadRequest)
+			writeError(w, http.StatusBadRequest, "Invalid min_price parameter")
 			return
 		}
 
 		maxPrice, err := strconv.ParseFloat(maxPriceStr, 64)
 		if err != nil || maxPrice < 0 || maxPrice < minPrice {
-			http.Error(w, "Invalid max_price parameter", http.StatusBadRequest)
+			writeError(w, http.StatusBadRequest, "Invalid max_price parameter")
 			return
 		}
 
 		if comparison == "" {
-			comparison = "more" // default
+			comparison = ComparisonMore // default
+		} else if comparison != ComparisonMore && comparison != ComparisonLess {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("Invalid comparison parameter. Must be '%s' or '%s'", ComparisonMore, ComparisonLess))
+			return
 		}
 
 		// Query restaurants
-		restaurants, err := restaurantRepo.FindTopByDishCount(limit, dishCount, minPrice, maxPrice, comparison)
+		restaurants, err := restaurantRepo.FindTopByDishCount(limit, dishCount, decimal.NewFromFloat(minPrice), decimal.NewFromFloat(maxPrice), comparison)
 		if err != nil {
 			log.Printf("Error querying top restaurants: %v", err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			writeError(w, http.StatusInternalServerError, "Internal server error")
 			return
 		}
 
 		// Return JSON response
-		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(restaurants); err != nil {
-			log.Printf("Error encoding response: %v", err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
-			return
-		}
+		writeResponse(w, restaurants, http.StatusOK)
 	})
 
 	// GET /search?q=pizza&limit=20
 	// Searches for restaurants and dishes by name, ranked by relevance
 	mux.HandleFunc("/search", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
 			return
 		}
 
 		queryTerm := r.URL.Query().Get("q")
 		if queryTerm == "" {
-			http.Error(w, "Missing required query parameter: q", http.StatusBadRequest)
+			writeError(w, http.StatusBadRequest, "Missing required query parameter: q")
 			return
 		}
 
@@ -236,7 +217,7 @@ func main() {
 			var err error
 			limit, err = strconv.Atoi(limitStr)
 			if err != nil || limit <= 0 {
-				http.Error(w, "Invalid limit parameter", http.StatusBadRequest)
+				writeError(w, http.StatusBadRequest, "Invalid limit parameter")
 				return
 			}
 		}
@@ -245,17 +226,12 @@ func main() {
 		results, err := restaurantRepo.Search(queryTerm, limit)
 		if err != nil {
 			log.Printf("Error searching: %v", err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			writeError(w, http.StatusInternalServerError, "Internal server error")
 			return
 		}
 
 		// Return JSON response
-		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(results); err != nil {
-			log.Printf("Error encoding response: %v", err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
-			return
-		}
+		writeResponse(w, results, http.StatusOK)
 	})
 
 	// POST /purchase
@@ -264,14 +240,14 @@ func main() {
 	// Header: Idempotency-Key (optional) - UUID to prevent duplicate orders on retry
 	mux.HandleFunc("/purchase", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
 			return
 		}
 
 		// Parse request body
 		var purchaseReq db.PurchaseRequest
 		if err := json.NewDecoder(r.Body).Decode(&purchaseReq); err != nil {
-			http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("Invalid request body: %v", err))
 			return
 		}
 
@@ -280,22 +256,22 @@ func main() {
 
 		// Validate required fields
 		if purchaseReq.UserID <= 0 {
-			http.Error(w, "Invalid user_id", http.StatusBadRequest)
+			writeError(w, http.StatusBadRequest, "Invalid user_id")
 			return
 		}
 
 		// Validate items
 		if len(purchaseReq.Items) == 0 {
-			http.Error(w, "items array cannot be empty", http.StatusBadRequest)
+			writeError(w, http.StatusBadRequest, "items array cannot be empty")
 			return
 		}
 		for i, item := range purchaseReq.Items {
 			if item.MenuItemID <= 0 {
-				http.Error(w, fmt.Sprintf("Invalid menu_item_id at index %d", i), http.StatusBadRequest)
+				writeError(w, http.StatusBadRequest, fmt.Sprintf("Invalid menu_item_id at index %d", i))
 				return
 			}
 			if item.Quantity <= 0 {
-				http.Error(w, fmt.Sprintf("Invalid quantity at index %d (must be > 0)", i), http.StatusBadRequest)
+				writeError(w, http.StatusBadRequest, fmt.Sprintf("Invalid quantity at index %d (must be > 0)", i))
 				return
 			}
 		}
@@ -310,25 +286,20 @@ func main() {
 				strings.HasPrefix(errMsg, "menu item not found"),
 				strings.HasPrefix(errMsg, "menu item is not active"),
 				strings.HasPrefix(errMsg, "no items specified"):
-				http.Error(w, errMsg, http.StatusNotFound)
+				writeError(w, http.StatusNotFound, errMsg)
 				return
 			case strings.HasPrefix(errMsg, "insufficient balance"):
-				http.Error(w, errMsg, http.StatusBadRequest)
+				writeError(w, http.StatusBadRequest, errMsg)
 				return
 			default:
 				log.Printf("Error processing purchase: %v", err)
-				http.Error(w, "Internal server error", http.StatusInternalServerError)
+				writeError(w, http.StatusInternalServerError, "Internal server error")
 				return
 			}
 		}
 
 		// Return success response
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		if err := json.NewEncoder(w).Encode(result); err != nil {
-			log.Printf("Error encoding response: %v", err)
-			return
-		}
+		writeResponse(w, result, http.StatusOK)
 	})
 
 	// Apply metrics middleware to all routes

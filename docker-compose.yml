@@ -52,7 +52,7 @@ services:
       POSTGRES_PASSWORD: foodpass
       POSTGRES_DB: fooddb
       PORT: "8080"
-      ENABLE_CACHE: "true"
+      ENABLE_CACHE: "false"
     ports:
       - "8080:8080"
 
