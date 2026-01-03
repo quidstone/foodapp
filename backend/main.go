@@ -13,6 +13,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
+	"github.com/quidstone/foodapp-backend/internal/api"
 	"github.com/quidstone/foodapp-backend/internal/db"
 	"github.com/quidstone/foodapp-backend/internal/metrics"
 	"github.com/shopspring/decimal"
@@ -84,7 +85,7 @@ func main() {
 	// GET /metrics - Returns collected metrics
 	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
-			writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+			api.WriteError(w, http.StatusMethodNotAllowed, "Method not allowed")
 			return
 		}
 
@@ -93,21 +94,21 @@ func main() {
 			"api_metrics": metricsCollector.GetAPIMetrics(),
 			"db_metrics":  metricsCollector.GetDBMetrics(),
 		}
-		writeResponse(w, metricsData, http.StatusOK)
+		api.WriteResponse(w, metricsData, http.StatusOK)
 	})
 
 	// GET /restaurants/open?datetime=2024-01-15T14:30:00Z
 	// Returns all restaurants open at the given datetime
 	mux.HandleFunc("/restaurants/open", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
-			writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+			api.WriteError(w, http.StatusMethodNotAllowed, "Method not allowed")
 			return
 		}
 
 		// Parse datetime query parameter
 		datetimeStr := r.URL.Query().Get("datetime")
 		if datetimeStr == "" {
-			writeError(w, http.StatusBadRequest, "Missing required query parameter: datetime")
+			api.WriteError(w, http.StatusBadRequest, "Missing required query parameter: datetime")
 			return
 		}
 
@@ -117,7 +118,7 @@ func main() {
 			// Try alternative formats
 			datetime, err = time.Parse("2006-01-02T15:04:05", datetimeStr)
 			if err != nil {
-				writeError(w, http.StatusBadRequest, fmt.Sprintf("Invalid datetime format. Use RFC3339 (e.g., 2024-01-15T14:30:00Z) or 2006-01-02T15:04:05: %v", err))
+				api.WriteError(w, http.StatusBadRequest, fmt.Sprintf("Invalid datetime format. Use RFC3339 (e.g., 2024-01-15T14:30:00Z) or 2006-01-02T15:04:05: %v", err))
 				return
 			}
 		}
@@ -126,19 +127,19 @@ func main() {
 		restaurants, err := restaurantRepo.FindOpenAtTime(datetime)
 		if err != nil {
 			log.Printf("Error querying open restaurants: %v", err)
-			writeError(w, http.StatusInternalServerError, "Internal server error")
+			api.WriteError(w, http.StatusInternalServerError, "Internal server error")
 			return
 		}
 
 		// Return JSON response
-		writeResponse(w, restaurants, http.StatusOK)
+		api.WriteResponse(w, restaurants, http.StatusOK)
 	})
 
 	// GET /restaurants/top?limit=10&dish_count=5&min_price=10&max_price=50&comparison=more
 	// Returns top y restaurants that have more/less than x dishes within price range, ranked alphabetically
 	mux.HandleFunc("/restaurants/top", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
-			writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+			api.WriteError(w, http.StatusMethodNotAllowed, "Method not allowed")
 			return
 		}
 
@@ -150,38 +151,38 @@ func main() {
 		comparison := r.URL.Query().Get("comparison")
 
 		if limitStr == "" || dishCountStr == "" || minPriceStr == "" || maxPriceStr == "" {
-			writeError(w, http.StatusBadRequest, "Missing required query parameters: limit, dish_count, min_price, max_price")
+			api.WriteError(w, http.StatusBadRequest, "Missing required query parameters: limit, dish_count, min_price, max_price")
 			return
 		}
 
 		limit, err := strconv.Atoi(limitStr)
 		if err != nil || limit <= 0 {
-			writeError(w, http.StatusBadRequest, "Invalid limit parameter")
+			api.WriteError(w, http.StatusBadRequest, "Invalid limit parameter")
 			return
 		}
 
 		dishCount, err := strconv.Atoi(dishCountStr)
 		if err != nil || dishCount < 0 {
-			writeError(w, http.StatusBadRequest, "Invalid dish_count parameter")
+			api.WriteError(w, http.StatusBadRequest, "Invalid dish_count parameter")
 			return
 		}
 
 		minPrice, err := strconv.ParseFloat(minPriceStr, 64)
 		if err != nil || minPrice < 0 {
-			writeError(w, http.StatusBadRequest, "Invalid min_price parameter")
+			api.WriteError(w, http.StatusBadRequest, "Invalid min_price parameter")
 			return
 		}
 
 		maxPrice, err := strconv.ParseFloat(maxPriceStr, 64)
 		if err != nil || maxPrice < 0 || maxPrice < minPrice {
-			writeError(w, http.StatusBadRequest, "Invalid max_price parameter")
+			api.WriteError(w, http.StatusBadRequest, "Invalid max_price parameter")
 			return
 		}
 
 		if comparison == "" {
 			comparison = ComparisonMore // default
 		} else if comparison != ComparisonMore && comparison != ComparisonLess {
-			writeError(w, http.StatusBadRequest, fmt.Sprintf("Invalid comparison parameter. Must be '%s' or '%s'", ComparisonMore, ComparisonLess))
+			api.WriteError(w, http.StatusBadRequest, fmt.Sprintf("Invalid comparison parameter. Must be '%s' or '%s'", ComparisonMore, ComparisonLess))
 			return
 		}
 
@@ -189,25 +190,25 @@ func main() {
 		restaurants, err := restaurantRepo.FindTopByDishCount(limit, dishCount, decimal.NewFromFloat(minPrice), decimal.NewFromFloat(maxPrice), comparison)
 		if err != nil {
 			log.Printf("Error querying top restaurants: %v", err)
-			writeError(w, http.StatusInternalServerError, "Internal server error")
+			api.WriteError(w, http.StatusInternalServerError, "Internal server error")
 			return
 		}
 
 		// Return JSON response
-		writeResponse(w, restaurants, http.StatusOK)
+		api.WriteResponse(w, restaurants, http.StatusOK)
 	})
 
 	// GET /search?q=pizza&limit=20
 	// Searches for restaurants and dishes by name, ranked by relevance
 	mux.HandleFunc("/search", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
-			writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+			api.WriteError(w, http.StatusMethodNotAllowed, "Method not allowed")
 			return
 		}
 
 		queryTerm := r.URL.Query().Get("q")
 		if queryTerm == "" {
-			writeError(w, http.StatusBadRequest, "Missing required query parameter: q")
+			api.WriteError(w, http.StatusBadRequest, "Missing required query parameter: q")
 			return
 		}
 
@@ -217,7 +218,7 @@ func main() {
 			var err error
 			limit, err = strconv.Atoi(limitStr)
 			if err != nil || limit <= 0 {
-				writeError(w, http.StatusBadRequest, "Invalid limit parameter")
+				api.WriteError(w, http.StatusBadRequest, "Invalid limit parameter")
 				return
 			}
 		}
@@ -226,12 +227,12 @@ func main() {
 		results, err := restaurantRepo.Search(queryTerm, limit)
 		if err != nil {
 			log.Printf("Error searching: %v", err)
-			writeError(w, http.StatusInternalServerError, "Internal server error")
+			api.WriteError(w, http.StatusInternalServerError, "Internal server error")
 			return
 		}
 
 		// Return JSON response
-		writeResponse(w, results, http.StatusOK)
+		api.WriteResponse(w, results, http.StatusOK)
 	})
 
 	// POST /purchase
@@ -240,14 +241,14 @@ func main() {
 	// Header: Idempotency-Key (optional) - UUID to prevent duplicate orders on retry
 	mux.HandleFunc("/purchase", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+			api.WriteError(w, http.StatusMethodNotAllowed, "Method not allowed")
 			return
 		}
 
 		// Parse request body
-		var purchaseReq db.PurchaseRequest
+		var purchaseReq api.PurchaseRequest
 		if err := json.NewDecoder(r.Body).Decode(&purchaseReq); err != nil {
-			writeError(w, http.StatusBadRequest, fmt.Sprintf("Invalid request body: %v", err))
+			api.WriteError(w, http.StatusBadRequest, fmt.Sprintf("Invalid request body: %v", err))
 			return
 		}
 
@@ -256,28 +257,43 @@ func main() {
 
 		// Validate required fields
 		if purchaseReq.UserID <= 0 {
-			writeError(w, http.StatusBadRequest, "Invalid user_id")
+			api.WriteError(w, http.StatusBadRequest, "Invalid user_id")
 			return
 		}
 
 		// Validate items
 		if len(purchaseReq.Items) == 0 {
-			writeError(w, http.StatusBadRequest, "items array cannot be empty")
+			api.WriteError(w, http.StatusBadRequest, "items array cannot be empty")
 			return
 		}
 		for i, item := range purchaseReq.Items {
 			if item.MenuItemID <= 0 {
-				writeError(w, http.StatusBadRequest, fmt.Sprintf("Invalid menu_item_id at index %d", i))
+				api.WriteError(w, http.StatusBadRequest, fmt.Sprintf("Invalid menu_item_id at index %d", i))
 				return
 			}
 			if item.Quantity <= 0 {
-				writeError(w, http.StatusBadRequest, fmt.Sprintf("Invalid quantity at index %d (must be > 0)", i))
+				api.WriteError(w, http.StatusBadRequest, fmt.Sprintf("Invalid quantity at index %d (must be > 0)", i))
 				return
 			}
 		}
 
+		// Map API Request to DB Params
+		dbItems := make([]db.PurchaseItem, len(purchaseReq.Items))
+		for i, item := range purchaseReq.Items {
+			dbItems[i] = db.PurchaseItem{
+				MenuItemID: item.MenuItemID,
+				Quantity:   item.Quantity,
+			}
+		}
+
+		purchaseParams := db.PurchaseParams{
+			UserID:         purchaseReq.UserID,
+			Items:          dbItems,
+			IdempotencyKey: purchaseReq.IdempotencyKey,
+		}
+
 		// Process purchase
-		result, err := userRepo.PurchaseDish(purchaseReq)
+		result, err := userRepo.PurchaseDish(purchaseParams)
 		if err != nil {
 			errMsg := err.Error()
 			// Check for specific error types
@@ -286,20 +302,29 @@ func main() {
 				strings.HasPrefix(errMsg, "menu item not found"),
 				strings.HasPrefix(errMsg, "menu item is not active"),
 				strings.HasPrefix(errMsg, "no items specified"):
-				writeError(w, http.StatusNotFound, errMsg)
+				api.WriteError(w, http.StatusNotFound, errMsg)
 				return
 			case strings.HasPrefix(errMsg, "insufficient balance"):
-				writeError(w, http.StatusBadRequest, errMsg)
+				api.WriteError(w, http.StatusBadRequest, errMsg)
 				return
 			default:
 				log.Printf("Error processing purchase: %v", err)
-				writeError(w, http.StatusInternalServerError, "Internal server error")
+				api.WriteError(w, http.StatusInternalServerError, "Internal server error")
 				return
 			}
 		}
 
+		// Map DB Result to API Result
+		apiResult := api.PurchaseResult{
+			OrderID:      result.OrderID,
+			UserID:       result.UserID,
+			RestaurantID: result.RestaurantID,
+			TotalAmount:  result.TotalAmount,
+			Message:      result.Message,
+		}
+
 		// Return success response
-		writeResponse(w, result, http.StatusOK)
+		api.WriteResponse(w, apiResult, http.StatusOK)
 	})
 
 	// Apply metrics middleware to all routes

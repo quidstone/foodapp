@@ -1,4 +1,4 @@
-package main
+package api
 
 import (
 	"encoding/json"
@@ -11,8 +11,8 @@ type Response struct {
 	Error string      `json:"error,omitempty"`
 }
 
-// writeError writes a JSON error response with the given status code and message
-func writeError(w http.ResponseWriter, statusCode int, message string) {
+// WriteError writes a JSON error response with the given status code and message
+func WriteError(w http.ResponseWriter, statusCode int, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
 	apiErr := Response{Error: message}
@@ -21,13 +21,13 @@ func writeError(w http.ResponseWriter, statusCode int, message string) {
 	}
 }
 
-// writeResponse writes a JSON response with the given data and status code
-func writeResponse(w http.ResponseWriter, data interface{}, statusCode int) {
+// WriteResponse writes a JSON response with the given data and status code
+func WriteResponse(w http.ResponseWriter, data interface{}, statusCode int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
 	response := Response{Data: data}
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		log.Printf("Error encoding response: %v", err)
-		writeError(w, http.StatusInternalServerError, "Internal server error")
+		WriteError(w, http.StatusInternalServerError, "Internal server error")
 	}
 }

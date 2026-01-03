@@ -6,20 +6,21 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/jmoiron/sqlx"
+	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestUserRepository_PurchaseDish(t *testing.T) {
 	tests := []struct {
 		name        string
-		request     PurchaseRequest
+		request     PurchaseParams
 		setupMock   func(mock sqlmock.Sqlmock)
 		expectError bool
 		errorMsg    string
 	}{
 		{
 			name: "success - valid purchase (single item)",
-			request: PurchaseRequest{
+			request: PurchaseParams{
 				UserID: 1,
 				Items: []PurchaseItem{
 					{MenuItemID: 10, Quantity: 2},
@@ -45,22 +46,22 @@ func TestUserRepository_PurchaseDish(t *testing.T) {
 
 				// Update user balance
 				mock.ExpectExec(`UPDATE users`).
-					WithArgs(31.00, 1). // totalAmount = 15.50 * 2
+					WithArgs(decimal.NewFromFloat(31.00), 1). // totalAmount = 15.50 * 2
 					WillReturnResult(sqlmock.NewResult(0, 1))
 
 				// Update restaurant balance
 				mock.ExpectExec(`UPDATE restaurants`).
-					WithArgs(31.00, 5).
+					WithArgs(decimal.NewFromFloat(31.00), 5).
 					WillReturnResult(sqlmock.NewResult(0, 1))
 
 				// Create order
 				mock.ExpectQuery(`INSERT INTO orders`).
-					WithArgs(1, 5, 31.00).
+					WithArgs(1, 5, decimal.NewFromFloat(31.00)).
 					WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(100))
 
 				// Create order item
 				mock.ExpectExec(`INSERT INTO order_items`).
-					WithArgs(100, 10, "Pizza", 15.50, 2, 31.00).
+					WithArgs(100, 10, "Pizza", decimal.NewFromFloat(15.50), 2, decimal.NewFromFloat(31.00)).
 					WillReturnResult(sqlmock.NewResult(0, 1))
 
 				// Commit transaction
@@ -70,7 +71,7 @@ func TestUserRepository_PurchaseDish(t *testing.T) {
 		},
 		{
 			name: "success - valid purchase (multiple items, new format)",
-			request: PurchaseRequest{
+			request: PurchaseParams{
 				UserID: 1,
 				Items: []PurchaseItem{
 					{MenuItemID: 10, Quantity: 2},
@@ -104,27 +105,27 @@ func TestUserRepository_PurchaseDish(t *testing.T) {
 
 				// Update user balance (total: 15.50*2 + 12.00*1 = 43.00)
 				mock.ExpectExec(`UPDATE users`).
-					WithArgs(43.00, 1).
+					WithArgs(decimal.NewFromFloat(43.00), 1).
 					WillReturnResult(sqlmock.NewResult(0, 1))
 
 				// Update restaurant balance
 				mock.ExpectExec(`UPDATE restaurants`).
-					WithArgs(43.00, 5).
+					WithArgs(decimal.NewFromFloat(43.00), 5).
 					WillReturnResult(sqlmock.NewResult(0, 1))
 
 				// Create order
 				mock.ExpectQuery(`INSERT INTO orders`).
-					WithArgs(1, 5, 43.00).
+					WithArgs(1, 5, decimal.NewFromFloat(43.00)).
 					WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(100))
 
 				// Create first order item
 				mock.ExpectExec(`INSERT INTO order_items`).
-					WithArgs(100, 10, "Pizza", 15.50, 2, 31.00).
+					WithArgs(100, 10, "Pizza", decimal.NewFromFloat(15.50), 2, decimal.NewFromFloat(31.00)).
 					WillReturnResult(sqlmock.NewResult(0, 1))
 
 				// Create second order item
 				mock.ExpectExec(`INSERT INTO order_items`).
-					WithArgs(100, 11, "Burger", 12.00, 1, 12.00).
+					WithArgs(100, 11, "Burger", decimal.NewFromFloat(12.00), 1, decimal.NewFromFloat(12.00)).
 					WillReturnResult(sqlmock.NewResult(0, 1))
 
 				// Commit transaction
@@ -134,7 +135,7 @@ func TestUserRepository_PurchaseDish(t *testing.T) {
 		},
 		{
 			name: "error - user not found",
-			request: PurchaseRequest{
+			request: PurchaseParams{
 				UserID: 999,
 				Items: []PurchaseItem{
 					{MenuItemID: 10, Quantity: 1},
@@ -152,7 +153,7 @@ func TestUserRepository_PurchaseDish(t *testing.T) {
 		},
 		{
 			name: "error - menu item not found",
-			request: PurchaseRequest{
+			request: PurchaseParams{
 				UserID: 1,
 				Items: []PurchaseItem{
 					{MenuItemID: 999, Quantity: 1},
@@ -175,7 +176,7 @@ func TestUserRepository_PurchaseDish(t *testing.T) {
 		},
 		{
 			name: "error - items from different restaurants",
-			request: PurchaseRequest{
+			request: PurchaseParams{
 				UserID: 1,
 				Items: []PurchaseItem{
 					{MenuItemID: 10, Quantity: 1}, // Restaurant 5
@@ -208,7 +209,7 @@ func TestUserRepository_PurchaseDish(t *testing.T) {
 		},
 		{
 			name: "error - menu item not active",
-			request: PurchaseRequest{
+			request: PurchaseParams{
 				UserID: 1,
 				Items: []PurchaseItem{
 					{MenuItemID: 10, Quantity: 1},
@@ -233,7 +234,7 @@ func TestUserRepository_PurchaseDish(t *testing.T) {
 		},
 		{
 			name: "error - insufficient balance (single item)",
-			request: PurchaseRequest{
+			request: PurchaseParams{
 				UserID: 1,
 				Items: []PurchaseItem{
 					{MenuItemID: 10, Quantity: 10}, // User has 100, item costs 15.50, needs 155
@@ -258,7 +259,7 @@ func TestUserRepository_PurchaseDish(t *testing.T) {
 		},
 		{
 			name: "error - insufficient balance (multiple items)",
-			request: PurchaseRequest{
+			request: PurchaseParams{
 				UserID: 1,
 				Items: []PurchaseItem{
 					{MenuItemID: 10, Quantity: 5}, // 15.50 * 5 = 77.50
@@ -289,7 +290,7 @@ func TestUserRepository_PurchaseDish(t *testing.T) {
 		},
 		{
 			name: "success - with idempotency key (first request)",
-			request: PurchaseRequest{
+			request: PurchaseParams{
 				UserID: 1,
 				Items: []PurchaseItem{
 					{MenuItemID: 10, Quantity: 2},
@@ -321,22 +322,22 @@ func TestUserRepository_PurchaseDish(t *testing.T) {
 
 				// Update user balance
 				mock.ExpectExec(`UPDATE users`).
-					WithArgs(31.00, 1).
+					WithArgs(decimal.NewFromFloat(31.00), 1).
 					WillReturnResult(sqlmock.NewResult(0, 1))
 
 				// Update restaurant balance
 				mock.ExpectExec(`UPDATE restaurants`).
-					WithArgs(31.00, 5).
+					WithArgs(decimal.NewFromFloat(31.00), 5).
 					WillReturnResult(sqlmock.NewResult(0, 1))
 
 				// Create order
 				mock.ExpectQuery(`INSERT INTO orders`).
-					WithArgs(1, 5, 31.00).
+					WithArgs(1, 5, decimal.NewFromFloat(31.00)).
 					WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(100))
 
 				// Create order item
 				mock.ExpectExec(`INSERT INTO order_items`).
-					WithArgs(100, 10, "Pizza", 15.50, 2, 31.00).
+					WithArgs(100, 10, "Pizza", decimal.NewFromFloat(15.50), 2, decimal.NewFromFloat(31.00)).
 					WillReturnResult(sqlmock.NewResult(0, 1))
 
 				// Insert idempotency key
@@ -351,7 +352,7 @@ func TestUserRepository_PurchaseDish(t *testing.T) {
 		},
 		{
 			name: "success - duplicate idempotency key returns cached response",
-			request: PurchaseRequest{
+			request: PurchaseParams{
 				UserID: 1,
 				Items: []PurchaseItem{
 					{MenuItemID: 10, Quantity: 2},
@@ -361,7 +362,7 @@ func TestUserRepository_PurchaseDish(t *testing.T) {
 			setupMock: func(mock sqlmock.Sqlmock) {
 				// Check for existing idempotency key - found!
 				cachedRows := sqlmock.NewRows([]string{"order_id", "user_id", "restaurant_id", "total_amount", "message"}).
-					AddRow(42, 1, 5, 31.00, "Successfully purchased 2 x Pizza from Pizza Place")
+					AddRow(42, 1, 5, decimal.NewFromFloat(31.00), "Successfully purchased 2 x Pizza from Pizza Place")
 				mock.ExpectQuery(`SELECT`).
 					WithArgs("existing-key-456").
 					WillReturnRows(cachedRows)
@@ -399,7 +400,7 @@ func TestUserRepository_PurchaseDish(t *testing.T) {
 				assert.NotNil(t, result)
 				assert.Greater(t, result.OrderID, int64(0))
 				assert.Equal(t, tt.request.UserID, result.UserID)
-				assert.Greater(t, result.TotalAmount, 0.0)
+				assert.True(t, result.TotalAmount.GreaterThan(decimal.Zero))
 				assert.NotEmpty(t, result.Message)
 			}
 

@@ -4,35 +4,37 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+
+	"github.com/shopspring/decimal"
 )
 
 // User represents a user in the database
 type User struct {
-	ID          int64   `db:"id" json:"id"`
-	Name        string  `db:"name" json:"name"`
-	CashBalance float64 `db:"cash_balance" json:"cash_balance"`
+	ID          int64           `db:"id"`
+	Name        string          `db:"name"`
+	CashBalance decimal.Decimal `db:"cash_balance"`
 }
 
 // PurchaseItem represents a single item in a purchase request
 type PurchaseItem struct {
-	MenuItemID int64 `json:"menu_item_id"`
-	Quantity   int   `json:"quantity"`
+	MenuItemID int64
+	Quantity   int
 }
 
-// PurchaseRequest represents a purchase request with multiple items
-type PurchaseRequest struct {
-	UserID         int64          `json:"user_id"`
-	Items          []PurchaseItem `json:"items"`
-	IdempotencyKey string         `json:"-"` // Set from header, not JSON body
+// PurchaseParams represents parameters for purchasing dishes
+type PurchaseParams struct {
+	UserID         int64
+	Items          []PurchaseItem
+	IdempotencyKey string
 }
 
 // PurchaseResult represents the result of a purchase
 type PurchaseResult struct {
-	OrderID      int64   `db:"order_id" json:"order_id"`
-	UserID       int64   `db:"user_id" json:"user_id"`
-	RestaurantID int64   `db:"restaurant_id" json:"restaurant_id"`
-	TotalAmount  float64 `db:"total_amount" json:"total_amount"`
-	Message      string  `db:"message" json:"message"`
+	OrderID      int64           `db:"order_id"`
+	UserID       int64           `db:"user_id"`
+	RestaurantID int64           `db:"restaurant_id"`
+	TotalAmount  decimal.Decimal `db:"total_amount"`
+	Message      string          `db:"message"`
 }
 
 // UserRepository handles user-related database queries
@@ -50,7 +52,7 @@ func NewUserRepository(db *DBWrapper) *UserRepository {
 // Uses FOR UPDATE row-level locking to prevent race conditions
 // Supports idempotency keys to prevent duplicate orders on retry
 // Returns error if user has insufficient balance, dish not found, or transaction fails
-func (r *UserRepository) PurchaseDish(req PurchaseRequest) (*PurchaseResult, error) {
+func (r *UserRepository) PurchaseDish(req PurchaseParams) (*PurchaseResult, error) {
 	// Validate items
 	if len(req.Items) == 0 {
 		return nil, errors.New("items list cannot be empty")
@@ -73,6 +75,7 @@ func (r *UserRepository) PurchaseDish(req PurchaseRequest) (*PurchaseResult, err
 			SELECT
 				(response->>'order_id')::BIGINT as order_id,
 				(response->>'user_id')::BIGINT as user_id,
+				(response->>'restaurant_id')::BIGINT as restaurant_id,
 				(response->>'restaurant_id')::BIGINT as restaurant_id,
 				(response->>'total_amount')::NUMERIC as total_amount,
 				response->>'message' as message
@@ -114,12 +117,12 @@ func (r *UserRepository) PurchaseDish(req PurchaseRequest) (*PurchaseResult, err
 
 	// Menu item structure
 	type menuItemInfo struct {
-		ID             int64   `db:"id"`
-		Name           string  `db:"name"`
-		Price          float64 `db:"price"`
-		RestaurantID   int64   `db:"restaurant_id"`
-		IsActive       bool    `db:"is_active"`
-		RestaurantName string  `db:"restaurant_name"`
+		ID             int64           `db:"id"`
+		Name           string          `db:"name"`
+		Price          decimal.Decimal `db:"price"`
+		RestaurantID   int64           `db:"restaurant_id"`
+		IsActive       bool            `db:"is_active"`
+		RestaurantName string          `db:"restaurant_name"`
 	}
 
 	// Fetch and validate all menu items
@@ -160,17 +163,17 @@ func (r *UserRepository) PurchaseDish(req PurchaseRequest) (*PurchaseResult, err
 	}
 
 	// Calculate total amount across all items
-	var totalAmount float64
+	var totalAmount decimal.Decimal
 	var itemMessages []string
 	for i, item := range items {
-		lineAmount := menuItems[i].Price * float64(item.Quantity)
-		totalAmount += lineAmount
+		lineAmount := menuItems[i].Price.Mul(decimal.NewFromInt(int64(item.Quantity)))
+		totalAmount = totalAmount.Add(lineAmount)
 		itemMessages = append(itemMessages, fmt.Sprintf("%d x %s", item.Quantity, menuItems[i].Name))
 	}
 
 	// Validate user has sufficient balance
-	if user.CashBalance < totalAmount {
-		return nil, fmt.Errorf("insufficient balance: user has %.2f, need %.2f", user.CashBalance, totalAmount)
+	if user.CashBalance.LessThan(totalAmount) {
+		return nil, fmt.Errorf("insufficient balance: user has %s, need %s", user.CashBalance.StringFixed(2), totalAmount.StringFixed(2))
 	}
 
 	// Update user balance (decrease)
@@ -206,7 +209,7 @@ func (r *UserRepository) PurchaseDish(req PurchaseRequest) (*PurchaseResult, err
 
 	// Create order items for each purchased item
 	for i, item := range items {
-		lineAmount := menuItems[i].Price * float64(item.Quantity)
+		lineAmount := menuItems[i].Price.Mul(decimal.NewFromInt(int64(item.Quantity)))
 		_, err = tx.Exec(`
 			INSERT INTO order_items (order_id, menu_item_id, dish_name, unit_price, quantity, line_amount)
 			VALUES ($1, $2, $3, $4, $5, $6)
@@ -237,8 +240,8 @@ func (r *UserRepository) PurchaseDish(req PurchaseRequest) (*PurchaseResult, err
 			INSERT INTO purchase_idempotency_keys (key, user_id, response)
 			VALUES ($1, $2, $3)
 		`, req.IdempotencyKey, req.UserID, fmt.Sprintf(
-			`{"order_id":%d,"user_id":%d,"restaurant_id":%d,"total_amount":%f,"message":"%s"}`,
-			result.OrderID, result.UserID, result.RestaurantID, result.TotalAmount, result.Message,
+			`{"order_id":%d,"user_id":%d,"restaurant_id":%d,"total_amount":%s,"message":"%s"}`,
+			result.OrderID, result.UserID, result.RestaurantID, result.TotalAmount.String(), result.Message,
 		))
 		if err != nil {
 			return nil, fmt.Errorf("failed to store idempotency key: %w", err)
